@@ -255,17 +255,32 @@ local function parse_string(str, i)
   decode_error(str, i, "expected closing quote for string")
 end
 
-
-local function parse_number(str, i)
-  local x = next_char(str, i, delim_chars)
-  local s = str:sub(i, x - 1)
-  local n = tonumber(s)
-  if not n then
-    decode_error(str, i, "invalid number '" .. s .. "'")
-  end
-  return n, x
+-- Helper function to check if a number is an integer
+local function is_integer(n)
+    return n == math.floor(n)
 end
 
+--local function encode_number(val)
+--  -- Check for NaN, -inf and inf
+--  if val ~= val or val <= -math.huge or val >= math.huge then
+--    error("unexpected number value '" .. tostring(val) .. "'")
+--  end
+--  return string.format("%.14g", val)
+--end
+
+local function encode_number(val)
+    -- Check for NaN, -inf and inf
+    if val ~= val or val <= -math.huge or val >= math.huge then
+        error("unexpected number value '" .. tostring(val) .. "'")
+    end
+
+    -- Check if the number is an integer
+    if is_integer(val) then
+        return string.format("%d", val)
+    else
+        return string.format("%.14g", val)
+    end
+end
 
 local function parse_literal(str, i)
   local x = next_char(str, i, delim_chars)
