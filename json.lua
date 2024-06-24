@@ -24,6 +24,9 @@
 
 local json = { _version = "0.1.2" }
 
+-- unique placeholder for "null"
+json.null = { _ = "nil" }
+
 -------------------------------------------------------------------------------
 -- Encode
 -------------------------------------------------------------------------------
@@ -55,7 +58,6 @@ local function encode_nil(val)
   return "null"
 end
 
-
 local function encode_table(val, stack)
   local res = {}
   stack = stack or {}
@@ -65,8 +67,32 @@ local function encode_table(val, stack)
 
   stack[val] = true
 
-  if rawget(val, 1) ~= nil or next(val) == nil then
-    -- Treat as array -- check keys are valid and it is not sparse
+   local t_type = 'array'
+   local n = 0
+   local max = -1
+   for k in pairs(val) do
+      if type(k) == "string" then
+        t_type = 'object'
+        break
+      elseif type(k) == "number" then
+        n = n + 1
+        max = math.max(max, k)
+      else
+        error("invalid table: mixed or invalid key types")
+      end
+    end
+  if t_type == 'array' then
+      if n == 0 then
+        t_type = 'object'
+      elseif n ~= #val then
+        t_type = 'sparse_array'
+      end
+    end
+
+  -- Check if it should be treated as an array or object
+  --if rawget(val, 1) ~= nil or next(val) == nil then
+  if  t_type == 'array' or t_type == 'sparse_array' then
+    -- Treat as array
     local n = 0
     for k in pairs(val) do
       if type(k) ~= "number" then
@@ -74,16 +100,12 @@ local function encode_table(val, stack)
       end
       n = n + 1
     end
-    if n ~= #val then
-      error("invalid table: sparse array")
-    end
-    -- Encode
-    for i, v in ipairs(val) do
+    -- Encode array
+    for i, v in pairs(val) do
       table.insert(res, encode(v, stack))
     end
     stack[val] = nil
     return "[" .. table.concat(res, ",") .. "]"
-
   else
     -- Treat as an object
     for k, v in pairs(val) do
@@ -98,19 +120,76 @@ local function encode_table(val, stack)
 end
 
 
+--local function encode_table(val, stack)
+--  local res = {}
+--  stack = stack or {}
+--
+--  -- Circular reference?
+--  if stack[val] then error("circular reference") end
+--
+--  stack[val] = true
+--  if rawget(val, 1) ~= nil or next(val) == nil then
+--    -- Treat as array -- check keys are valid and it is not sparse
+--    local n = 0
+--    for k in pairs(val) do
+--      if type(k) ~= "number" then
+--        error("invalid table: mixed or invalid key types")
+--      end
+--      n = n + 1
+--    end
+--    if n ~= #val then
+--      error("invalid table: sparse array")
+--    end
+--    -- Encode
+--    for i, v in ipairs(val) do
+--      table.insert(res, encode(v, stack))
+--    end
+--    stack[val] = nil
+--    return "[" .. table.concat(res, ",") .. "]"
+--
+--  else
+--    -- Treat as an object
+--    for k, v in pairs(val) do
+--      if type(k) ~= "string" then
+--        error("invalid table: mixed or invalid key types")
+--      end
+--      table.insert(res, encode(k, stack) .. ":" .. encode(v, stack))
+--    end
+--    stack[val] = nil
+--    return "{" .. table.concat(res, ",") .. "}"
+--  end
+--end
+
 local function encode_string(val)
   return '"' .. val:gsub('[%z\1-\31\\"]', escape_char) .. '"'
 end
 
-
-local function encode_number(val)
-  -- Check for NaN, -inf and inf
-  if val ~= val or val <= -math.huge or val >= math.huge then
-    error("unexpected number value '" .. tostring(val) .. "'")
-  end
-  return string.format("%.14g", val)
+-- Helper function to check if a number is an integer
+local function is_integer(n)
+    return n == math.floor(n)
 end
 
+--local function encode_number(val)
+--  -- Check for NaN, -inf and inf
+--  if val ~= val or val <= -math.huge or val >= math.huge then
+--    error("unexpected number value '" .. tostring(val) .. "'")
+--  end
+--  return string.format("%.14g", val)
+--end
+
+local function encode_number(val)
+    -- Check for NaN, -inf and inf
+    if val ~= val or val <= -math.huge or val >= math.huge then
+        error("unexpected number value '" .. tostring(val) .. "'")
+    end
+
+    -- Check if the number is an integer
+    if is_integer(val) then
+        return string.format("%d", val)
+    else
+        return string.format("%.14g", val)
+    end
+end
 
 local type_func_map = {
   [ "nil"     ] = encode_nil,
@@ -122,6 +201,10 @@ local type_func_map = {
 
 
 encode = function(val, stack)
+  if val == json.null then
+    return encode_nil(val)
+  end
+
   local t = type(val)
   local f = type_func_map[t]
   if f then
@@ -158,7 +241,7 @@ local literals      = create_set("true", "false", "null")
 local literal_map = {
   [ "true"  ] = true,
   [ "false" ] = false,
-  [ "null"  ] = nil,
+  [ "null"  ] = json.null,
 }
 
 
@@ -255,32 +338,17 @@ local function parse_string(str, i)
   decode_error(str, i, "expected closing quote for string")
 end
 
--- Helper function to check if a number is an integer
-local function is_integer(n)
-    return n == math.floor(n)
+
+local function parse_number(str, i)
+  local x = next_char(str, i, delim_chars)
+  local s = str:sub(i, x - 1)
+  local n = tonumber(s)
+  if not n then
+    decode_error(str, i, "invalid number '" .. s .. "'")
+  end
+  return n, x
 end
 
---local function encode_number(val)
---  -- Check for NaN, -inf and inf
---  if val ~= val or val <= -math.huge or val >= math.huge then
---    error("unexpected number value '" .. tostring(val) .. "'")
---  end
---  return string.format("%.14g", val)
---end
-
-local function encode_number(val)
-    -- Check for NaN, -inf and inf
-    if val ~= val or val <= -math.huge or val >= math.huge then
-        error("unexpected number value '" .. tostring(val) .. "'")
-    end
-
-    -- Check if the number is an integer
-    if is_integer(val) then
-        return string.format("%d", val)
-    else
-        return string.format("%.14g", val)
-    end
-end
 
 local function parse_literal(str, i)
   local x = next_char(str, i, delim_chars)
